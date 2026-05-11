@@ -53,6 +53,7 @@ def watch_once(
     candidate_count: int | None = None,
     max_candidates: int | None = None,
     initial_status: str = "detected",
+    selection_engine: str = "heuristic",
 ) -> WatchOnceResult:
     candidate_result: CandidateGenerationResult | None = None
     if choice_json_path is None:
@@ -61,6 +62,7 @@ def watch_once(
             window_start_kst=window_start_kst,
             window_end_kst=window_end_kst,
             candidate_count=candidate_count,
+            selection_engine=selection_engine,
         )
         choice_path = candidate_result.choice_json_path
     else:

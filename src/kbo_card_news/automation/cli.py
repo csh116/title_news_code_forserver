@@ -27,6 +27,12 @@ from kbo_card_news.automation.news_watcher import (
     DEFAULT_WATCH_MAX_CANDIDATES,
     watch_once,
 )
+from kbo_card_news.automation.fresh_issue_detector import (
+    SOURCE_DB_PATH,
+    FreshIssueDetectorConfig,
+    fresh_watch_result_to_dict,
+    watch_fresh_once,
+)
 from kbo_card_news.automation.topic_ranker import rank_candidate, rank_result_to_metadata
 from kbo_card_news.automation.discord_bot import (
     send_editor_ready_notification,
@@ -117,6 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
     candidates_parser.add_argument("--window-start-kst", help="YYYY-MM-DD HH:MM. Default uses manual script default.")
     candidates_parser.add_argument("--window-end-kst", help="YYYY-MM-DD HH:MM. Default uses manual script default.")
     candidates_parser.add_argument("--candidate-count", type=int)
+    candidates_parser.add_argument("--selection-engine", choices=["heuristic", "gemini"], default="heuristic")
 
     confirm_parser = subparsers.add_parser("confirm", help="Confirm selected topic candidates non-interactively.")
     confirm_parser.add_argument("choice_json_path")
@@ -147,6 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     watch_parser.add_argument("--window-end-kst", help="YYYY-MM-DD HH:MM. Used only when generating candidates.")
     watch_parser.add_argument("--candidate-count", type=int)
     watch_parser.add_argument("--max-candidates", type=int)
+    watch_parser.add_argument("--selection-engine", choices=["heuristic", "gemini"], default="heuristic")
     watch_parser.add_argument("--initial-status", default="detected")
     watch_parser.add_argument("--json", action="store_true")
 
@@ -168,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Maximum candidates persisted as automation jobs. Default: {DEFAULT_WATCH_MAX_CANDIDATES}.",
     )
     watch_cycle_parser.add_argument("--initial-status", default="detected")
+    watch_cycle_parser.add_argument("--selection-engine", choices=["heuristic", "gemini"], default="heuristic")
     watch_cycle_parser.add_argument("--notify", action="store_true")
     watch_cycle_parser.add_argument("--channel-id")
     watch_cycle_parser.add_argument("--bot-token")
@@ -180,6 +189,27 @@ def build_parser() -> argparse.ArgumentParser:
     watch_cycle_parser.add_argument("--button-worker-port", type=int, default=8787)
     watch_cycle_parser.add_argument("--lock-path")
     watch_cycle_parser.add_argument("--json", action="store_true")
+
+    fresh_parser = subparsers.add_parser("watch-fresh-cycle", help="Run one locked fresh issue watcher cycle.")
+    fresh_parser.add_argument("--source-db-path", default=str(SOURCE_DB_PATH))
+    fresh_parser.add_argument("--collection-window-minutes", type=int, default=10)
+    fresh_parser.add_argument("--context-window-hours", type=int, default=24)
+    fresh_parser.add_argument("--duplicate-lookback-hours", type=int, default=72)
+    fresh_parser.add_argument("--min-issue-score", type=float, default=65.0)
+    fresh_parser.add_argument("--max-jobs", type=int, default=5)
+    fresh_parser.add_argument("--gemini-review", dest="gemini_review", action="store_true", default=True)
+    fresh_parser.add_argument("--no-gemini-review", dest="gemini_review", action="store_false")
+    fresh_parser.add_argument("--notify", action="store_true")
+    fresh_parser.add_argument("--channel-id")
+    fresh_parser.add_argument("--bot-token")
+    fresh_parser.add_argument("--dry-run-notify", action="store_true")
+    fresh_parser.add_argument("--no-start-button-worker", action="store_true")
+    fresh_parser.add_argument("--button-worker-host", default="127.0.0.1")
+    fresh_parser.add_argument("--button-worker-public-host")
+    fresh_parser.add_argument("--button-worker-tailscale-funnel-base-url")
+    fresh_parser.add_argument("--button-worker-port", type=int, default=8787)
+    fresh_parser.add_argument("--lock-path")
+    fresh_parser.add_argument("--json", action="store_true")
 
     rank_parser = subparsers.add_parser("rank-candidates", help="Score candidates from a topic_selection_choice.json.")
     rank_parser.add_argument("choice_json_path")
@@ -358,6 +388,9 @@ def main() -> None:
         if args.command == "watch-cycle":
             _handle_watch_cycle(repository, args)
             return
+        if args.command == "watch-fresh-cycle":
+            _handle_watch_fresh_cycle(repository, args)
+            return
         if args.command == "notify-pending":
             _handle_notify_pending(repository, args)
             return
@@ -520,6 +553,7 @@ def _handle_candidates(args: argparse.Namespace) -> None:
         window_start_kst=args.window_start_kst,
         window_end_kst=args.window_end_kst,
         candidate_count=args.candidate_count,
+        selection_engine=args.selection_engine,
     )
     print(
         json.dumps(
@@ -600,6 +634,7 @@ def _handle_watch_once(repository: AutomationJobRepository, args: argparse.Names
         candidate_count=args.candidate_count,
         max_candidates=args.max_candidates,
         initial_status=args.initial_status,
+        selection_engine=args.selection_engine,
     )
     payload = {
         "choice_json_path": str(result.choice_json_path),
@@ -658,6 +693,7 @@ def _run_watch_cycle_under_lock(repository: AutomationJobRepository, args: argpa
         candidate_count=args.candidate_count,
         max_candidates=args.max_candidates,
         initial_status=args.initial_status,
+        selection_engine=args.selection_engine,
     )
     notified_count = 0
     notification_failed_count = 0
@@ -704,6 +740,94 @@ def _run_watch_cycle_under_lock(repository: AutomationJobRepository, args: argpa
         "notification_payloads": notification_payloads,
         "button_worker": button_worker,
     }
+
+
+def _handle_watch_fresh_cycle(repository: AutomationJobRepository, args: argparse.Namespace) -> None:
+    try:
+        payload = run_with_lock(
+            args.lock_path,
+            lambda: _run_watch_fresh_cycle_under_lock(repository, args),
+        )
+    except AutomationLockBusy as exc:
+        raise SystemExit(str(exc)) from exc
+    except Exception as exc:
+        log_path = write_failure_log(
+            operation="watch_fresh_cycle",
+            exc=exc,
+            metadata={"db_path": str(repository.db_path), "source_db_path": args.source_db_path},
+        )
+        raise SystemExit(f"watch-fresh-cycle failed; failure_log={log_path}") from exc
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print(f"report_path={payload['report_path']}")
+    print(f"choice_json_path={payload['choice_json_path']}")
+    print(f"collected_count={payload['collected_count']}")
+    print(f"inserted_count={payload['inserted_count']}")
+    print(f"candidate_count={payload['candidate_count']}")
+    print(f"created_count={payload['created_count']}")
+    print(f"duplicate_job_count={payload['duplicate_job_count']}")
+    print(f"notified_count={payload['notified_count']}")
+    print(f"notification_failed_count={payload['notification_failed_count']}")
+
+
+def _run_watch_fresh_cycle_under_lock(repository: AutomationJobRepository, args: argparse.Namespace) -> dict[str, Any]:
+    config = FreshIssueDetectorConfig(
+        collection_window_minutes=args.collection_window_minutes,
+        context_window_hours=args.context_window_hours,
+        duplicate_lookback_hours=args.duplicate_lookback_hours,
+        min_issue_score=args.min_issue_score,
+        max_jobs=args.max_jobs,
+        gemini_review_enabled=args.gemini_review,
+    )
+    result = watch_fresh_once(
+        job_repository=repository,
+        source_db_path=args.source_db_path,
+        config=config,
+    )
+    notified_count = 0
+    notification_failed_count = 0
+    notification_payloads: list[dict[str, Any]] = []
+    button_worker: dict[str, Any] | None = None
+    if args.notify:
+        for job in result.created_jobs:
+            notification = send_job_notification(
+                job,
+                channel_id=args.channel_id,
+                bot_token=args.bot_token,
+                dry_run=args.dry_run_notify,
+            )
+            if args.dry_run_notify:
+                notification_payloads.append({"job_id": job.job_id, "payload": notification.payload})
+                continue
+            if notification.ok:
+                notified_count += 1
+                repository.update_status(
+                    job.job_id,
+                    "notified",
+                    message="Discord notification sent by watch-fresh-cycle",
+                    metadata={"discord_status_code": notification.status_code},
+                )
+            else:
+                notification_failed_count += 1
+                repository.record_event(
+                    job.job_id,
+                    "discord_notification_failed",
+                    message=notification.message,
+                    metadata={"discord_status_code": notification.status_code},
+                )
+        if notified_count and not args.dry_run_notify and not args.no_start_button_worker:
+            button_worker = _ensure_button_worker_from_args(repository, args)
+    payload = fresh_watch_result_to_dict(result)
+    payload.update(
+        {
+            "notified_count": notified_count,
+            "notification_failed_count": notification_failed_count,
+            "notification_payloads": notification_payloads,
+            "button_worker": button_worker,
+        }
+    )
+    return payload
 
 
 def _handle_rank_candidates(args: argparse.Namespace) -> None:

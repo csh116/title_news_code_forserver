@@ -104,6 +104,15 @@ class SourceItemRepository:
     def list_items(self) -> list[PersistedSourceItem]:
         raise NotImplementedError
 
+    def list_items_published_between(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+        limit: int = 500,
+    ) -> list[PersistedSourceItem]:
+        raise NotImplementedError
+
 
 class SourceItemTransformer:
     @staticmethod
@@ -236,6 +245,21 @@ class InMemorySourceItemRepository(SourceItemRepository):
     def list_items(self) -> list[PersistedSourceItem]:
         return list(self._items_by_id.values())
 
+    def list_items_published_between(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+        limit: int = 500,
+    ) -> list[PersistedSourceItem]:
+        rows = [
+            item
+            for item in self._items_by_id.values()
+            if window_start <= (item.item.published_at or item.item.collected_at) < window_end
+        ]
+        rows.sort(key=lambda value: (value.item.published_at or value.item.collected_at, value.item.id))
+        return rows[: max(1, int(limit))]
+
     @staticmethod
     def _build_source_url_key(item: SourceItemRecord) -> str:
         return f"{item.source_type}:{item.source_item_type}:{item.source_url}"
@@ -311,6 +335,9 @@ class SQLiteSourceItemRepository(SourceItemRepository):
 
             CREATE INDEX IF NOT EXISTS idx_source_items_content_hash
             ON source_items(content_hash);
+
+            CREATE INDEX IF NOT EXISTS idx_source_items_published_collected
+            ON source_items(published_at, collected_at);
 
             CREATE INDEX IF NOT EXISTS idx_source_assets_source_item_id
             ON source_assets(source_item_id);
@@ -518,12 +545,45 @@ class SQLiteSourceItemRepository(SourceItemRepository):
             ORDER BY collected_at ASC, id ASC
             """
         ).fetchall()
-        asset_rows = self._connection.execute(
+        return self._persisted_items_from_rows(item_rows)
+
+    def list_items_published_between(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+        limit: int = 500,
+    ) -> list[PersistedSourceItem]:
+        item_rows = self._connection.execute(
             """
             SELECT *
+            FROM source_items
+            WHERE julianday(COALESCE(published_at, collected_at)) >= julianday(?)
+              AND julianday(COALESCE(published_at, collected_at)) < julianday(?)
+            ORDER BY julianday(COALESCE(published_at, collected_at)) ASC, id ASC
+            LIMIT ?
+            """,
+            (
+                _serialize_datetime(window_start),
+                _serialize_datetime(window_end),
+                max(1, int(limit)),
+            ),
+        ).fetchall()
+        return self._persisted_items_from_rows(item_rows)
+
+    def _persisted_items_from_rows(self, item_rows: list[sqlite3.Row]) -> list[PersistedSourceItem]:
+        if not item_rows:
+            return []
+        item_ids = [str(row["id"]) for row in item_rows]
+        placeholders = ",".join("?" for _ in item_ids)
+        asset_rows = self._connection.execute(
+            f"""
+            SELECT *
             FROM source_assets
+            WHERE source_item_id IN ({placeholders})
             ORDER BY source_item_id ASC, sort_order ASC, id ASC
-            """
+            """,
+            item_ids,
         ).fetchall()
 
         assets_by_item_id: dict[str, list[SourceAssetRecord]] = {}

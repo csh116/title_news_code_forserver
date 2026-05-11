@@ -71,6 +71,7 @@ def generate_topic_candidates(
     window_start_kst: str | None = None,
     window_end_kst: str | None = None,
     candidate_count: int | None = None,
+    selection_engine: str = "heuristic",
 ) -> CandidateGenerationResult:
     run_dir = create_approval_run_dir(approval_run_dir)
     resolved_window_start, resolved_window_end = _resolve_candidate_window(
@@ -89,6 +90,8 @@ def generate_topic_candidates(
             resolved_window_end,
             "--candidate-count",
             str(resolved_candidate_count),
+            "--selection-engine",
+            selection_engine,
         ],
     )
     stage_dir = run_dir / "01_topic_candidates"

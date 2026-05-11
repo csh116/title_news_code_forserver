@@ -57,6 +57,8 @@ def resolve_discord_bot_config(
 
 
 def build_job_message(job: AutomationJob) -> str:
+    if (job.metadata or {}).get("source") == "watch_fresh_once":
+        return build_fresh_issue_job_message(job)
     level_label = {
         "immediate": "즉시 확인",
         "watch": "지켜볼 만함",
@@ -83,6 +85,60 @@ def build_job_message(job: AutomationJob) -> str:
             *article_lines,
         ]
     )[:1700]
+
+
+def build_fresh_issue_job_message(job: AutomationJob) -> str:
+    metadata = job.metadata or {}
+    level_label = {
+        "immediate": "강한 이슈",
+        "watch": "확인 후보",
+        "digest": "묶어서 확인",
+    }.get(job.notification_level, job.notification_level)
+    reasons = metadata.get("score_reasons") if isinstance(metadata.get("score_reasons"), list) else []
+    risks = metadata.get("risk_flags") if isinstance(metadata.get("risk_flags"), list) else []
+    matched_keywords = metadata.get("matched_keywords") if isinstance(metadata.get("matched_keywords"), list) else []
+    time_bits = []
+    fresh_count = metadata.get("fresh_article_count")
+    context_count = metadata.get("context_article_count")
+    source_diversity = metadata.get("source_diversity")
+    if fresh_count is not None:
+        time_bits.append(f"신규 {fresh_count}건")
+    if context_count is not None:
+        time_bits.append(f"24시간 관련 {context_count}건")
+    if source_diversity is not None:
+        time_bits.append(f"{source_diversity}개 매체")
+    if matched_keywords:
+        time_bits.append("키워드 " + ", ".join(str(value) for value in matched_keywords[:4]))
+
+    article_lines = []
+    for index, article in enumerate(job.articles[:3], start=1):
+        title = _truncate(article.title, 70)
+        if article.source_url:
+            article_lines.append(f"{index}. {title}\n{article.source_url}")
+        else:
+            article_lines.append(f"{index}. {title}")
+    if not article_lines:
+        article_lines.append("근거 기사 정보 없음")
+
+    lines = [
+        f"[{level_label}]",
+        _truncate(job.topic_name, 90),
+        "",
+        f"점수: {job.virality_potential_score:.0f}",
+    ]
+    gemini_decision = metadata.get("gemini_decision")
+    if gemini_decision:
+        confidence = metadata.get("gemini_confidence")
+        confidence_text = f" ({float(confidence):.2f})" if isinstance(confidence, (int, float)) else ""
+        lines.append(f"Gemini 판단: {gemini_decision}{confidence_text}")
+    if time_bits:
+        lines.append("근거: " + " / ".join(time_bits))
+    if reasons:
+        lines.append("세부: " + " / ".join(str(value) for value in reasons[:3]))
+    if risks:
+        lines.append("리스크: " + " / ".join(str(value) for value in risks[:3]))
+    lines.extend(["", "기사", *article_lines])
+    return "\n".join(lines)[:1700]
 
 
 def build_render_message(

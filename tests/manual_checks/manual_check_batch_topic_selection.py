@@ -17,7 +17,7 @@ if str(ROOT_DIR) not in sys.path:
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from kbo_card_news.collectors.news_sites import NEWS_SITE_DEFINITIONS, NewsSiteCollector, NewsSiteCollectorConfig  # noqa: E402
+from kbo_card_news.automation.news_collection import build_news_collectors  # noqa: E402
 from kbo_card_news.collectors.service import CollectorService  # noqa: E402
 from kbo_card_news.config.env import load_default_env  # noqa: E402
 from kbo_card_news.pipeline import SQLiteSourceItemRepository, SourceItemIngestionService, StoredArticleBatchBuilder  # noqa: E402
@@ -43,25 +43,14 @@ DEFAULT_START, DEFAULT_END = _default_window()
 DEFAULT_CANDIDATE_COUNT = 10
 
 
-def build_news_collectors() -> list[NewsSiteCollector]:
-    return [
-        NewsSiteCollector(
-            NewsSiteCollectorConfig(
-                definition=definition,
-                default_page_limit=1,
-                window_page_limit_min=8,
-                window_page_limit_per_day=8,
-                window_page_limit_max=40,
-            )
-        )
-        for definition in NEWS_SITE_DEFINITIONS.values()
-    ]
-
-
-def choose_selection_engine():
+def choose_selection_engine(selection_engine: str):
     load_default_env(ROOT_DIR)
-    if os.getenv("GEMINI_API_KEY"):
+    if selection_engine == "gemini":
+        if not os.getenv("GEMINI_API_KEY"):
+            raise RuntimeError("GEMINI_API_KEY is required when --selection-engine=gemini")
         return GeminiBatchIssueSelectionEngine()
+    if selection_engine != "heuristic":
+        raise ValueError(f"unsupported selection engine: {selection_engine}")
     return HeuristicBatchIssueSelectionEngine()
 
 
@@ -114,6 +103,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--window-start-kst", help="YYYY-MM-DD HH:MM. Defaults to now-24h in KST.")
     parser.add_argument("--window-end-kst", help="YYYY-MM-DD HH:MM. Defaults to now in KST.")
     parser.add_argument("--candidate-count", type=int, help=f"Candidate count. Default: {DEFAULT_CANDIDATE_COUNT}.")
+    parser.add_argument(
+        "--selection-engine",
+        choices=["heuristic", "gemini"],
+        default="heuristic",
+        help="Topic selection engine. Default: heuristic.",
+    )
     parser.add_argument("--non-interactive", action="store_true", help="Use defaults instead of prompting.")
     return parser.parse_args()
 
@@ -336,7 +331,7 @@ def main() -> None:
             window_start=window_start.astimezone(timezone.utc),
             window_end=window_end.astimezone(timezone.utc),
         )
-        selection_engine = choose_selection_engine()
+        selection_engine = choose_selection_engine(args.selection_engine)
         selection_service = BatchIssueSelectionService(engine=selection_engine)
         selection_result, excluded_topics = selection_service.select_topic_candidates_with_history(
             batch_input=batch_input,
