@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import secrets
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from kbo_card_news.automation.job_state import (
+    AUTOMATION_OUTPUT_DIR,
     AUTOMATION_STATE_DB_PATH,
     AutomationJob,
     AutomationJobArticle,
@@ -28,6 +30,7 @@ from kbo_card_news.automation.news_watcher import (
     watch_once,
 )
 from kbo_card_news.automation.fresh_issue_detector import (
+    KST,
     SOURCE_DB_PATH,
     FreshIssueDetectorConfig,
     fresh_watch_result_to_dict,
@@ -209,6 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     fresh_parser.add_argument("--button-worker-tailscale-funnel-base-url")
     fresh_parser.add_argument("--button-worker-port", type=int, default=8787)
     fresh_parser.add_argument("--lock-path")
+    fresh_parser.add_argument("--quiet-start-hour", type=int, default=0)
+    fresh_parser.add_argument("--quiet-end-hour", type=int, default=7)
     fresh_parser.add_argument("--json", action="store_true")
 
     rank_parser = subparsers.add_parser("rank-candidates", help="Score candidates from a topic_selection_choice.json.")
@@ -743,10 +748,30 @@ def _run_watch_cycle_under_lock(repository: AutomationJobRepository, args: argpa
 
 
 def _handle_watch_fresh_cycle(repository: AutomationJobRepository, args: argparse.Namespace) -> None:
+    schedule = _fresh_cycle_schedule_decision(
+        now=datetime.now(KST),
+        quiet_start_hour=args.quiet_start_hour,
+        quiet_end_hour=args.quiet_end_hour,
+    )
+    if schedule["mode"] == "skip":
+        payload = {
+            "status": "skipped_quiet_hours",
+            "reason": schedule["reason"],
+            "quiet_start_hour": args.quiet_start_hour,
+            "quiet_end_hour": args.quiet_end_hour,
+            "now": schedule["now"],
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return
+        print("status=skipped_quiet_hours")
+        print(f"reason={payload['reason']}")
+        return
+
     try:
         payload = run_with_lock(
             args.lock_path,
-            lambda: _run_watch_fresh_cycle_under_lock(repository, args),
+            lambda: _run_watch_fresh_cycle_under_lock(repository, args, schedule=schedule),
         )
     except AutomationLockBusy as exc:
         raise SystemExit(str(exc)) from exc
@@ -771,7 +796,17 @@ def _handle_watch_fresh_cycle(repository: AutomationJobRepository, args: argpars
     print(f"notification_failed_count={payload['notification_failed_count']}")
 
 
-def _run_watch_fresh_cycle_under_lock(repository: AutomationJobRepository, args: argparse.Namespace) -> dict[str, Any]:
+def _run_watch_fresh_cycle_under_lock(
+    repository: AutomationJobRepository,
+    args: argparse.Namespace,
+    *,
+    schedule: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    schedule = schedule or _fresh_cycle_schedule_decision(
+        now=datetime.now(KST),
+        quiet_start_hour=args.quiet_start_hour,
+        quiet_end_hour=args.quiet_end_hour,
+    )
     config = FreshIssueDetectorConfig(
         collection_window_minutes=args.collection_window_minutes,
         context_window_hours=args.context_window_hours,
@@ -780,11 +815,40 @@ def _run_watch_fresh_cycle_under_lock(repository: AutomationJobRepository, args:
         max_jobs=args.max_jobs,
         gemini_review_enabled=args.gemini_review,
     )
+    marker_path = Path(str(schedule["marker_path"])) if schedule.get("marker_path") else None
+    if marker_path is not None and marker_path.exists():
+        current = datetime.now(KST).replace(second=0, microsecond=0)
+        schedule = {
+            "mode": "normal",
+            "now": current.isoformat(),
+            "analysis_now": current.isoformat(),
+        }
+        marker_path = None
+    run_now = datetime.fromisoformat(str(schedule["analysis_now"])) if schedule.get("analysis_now") else None
+    collection_window_start = (
+        datetime.fromisoformat(str(schedule["collection_window_start"]))
+        if schedule.get("collection_window_start")
+        else None
+    )
+    collection_window_end = (
+        datetime.fromisoformat(str(schedule["collection_window_end"]))
+        if schedule.get("collection_window_end")
+        else None
+    )
     result = watch_fresh_once(
         job_repository=repository,
         source_db_path=args.source_db_path,
         config=config,
+        now=run_now,
+        collection_window_start=collection_window_start,
+        collection_window_end=collection_window_end,
     )
+    if marker_path is not None:
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text(
+            json.dumps({"completed_at": datetime.now(KST).isoformat()}, ensure_ascii=False),
+            encoding="utf-8",
+        )
     notified_count = 0
     notification_failed_count = 0
     notification_payloads: list[dict[str, Any]] = []
@@ -821,6 +885,8 @@ def _run_watch_fresh_cycle_under_lock(repository: AutomationJobRepository, args:
     payload = fresh_watch_result_to_dict(result)
     payload.update(
         {
+            "status": "completed",
+            "schedule_mode": schedule["mode"],
             "notified_count": notified_count,
             "notification_failed_count": notification_failed_count,
             "notification_payloads": notification_payloads,
@@ -828,6 +894,60 @@ def _run_watch_fresh_cycle_under_lock(repository: AutomationJobRepository, args:
         }
     )
     return payload
+
+
+def _fresh_cycle_schedule_decision(
+    *,
+    now: datetime,
+    quiet_start_hour: int = 0,
+    quiet_end_hour: int = 7,
+) -> dict[str, Any]:
+    current = now if now.tzinfo else now.replace(tzinfo=KST)
+    current = current.astimezone(KST).replace(second=0, microsecond=0)
+    start_hour = int(quiet_start_hour) % 24
+    end_hour = int(quiet_end_hour) % 24
+    if start_hour != 0 or end_hour != 7:
+        if _hour_in_quiet_window(current.hour, start_hour=start_hour, end_hour=end_hour):
+            return {
+                "mode": "skip",
+                "reason": f"quiet_hours_{start_hour:02d}_to_{end_hour:02d}",
+                "now": current.isoformat(),
+            }
+        return {"mode": "normal", "now": current.isoformat(), "analysis_now": current.isoformat()}
+
+    if 0 <= current.hour < 7:
+        return {
+            "mode": "skip",
+            "reason": "quiet_hours_00_to_07",
+            "now": current.isoformat(),
+        }
+    if current.hour == 7:
+        marker_path = _fresh_morning_catchup_marker_path(current)
+        if not marker_path.exists():
+            midnight = current.replace(hour=0, minute=0)
+            seven = current.replace(hour=7, minute=0)
+            return {
+                "mode": "morning_catchup",
+                "now": current.isoformat(),
+                "analysis_now": seven.isoformat(),
+                "collection_window_start": midnight.isoformat(),
+                "collection_window_end": seven.isoformat(),
+                "marker_path": str(marker_path),
+            }
+    return {"mode": "normal", "now": current.isoformat(), "analysis_now": current.isoformat()}
+
+
+def _hour_in_quiet_window(hour: int, *, start_hour: int, end_hour: int) -> bool:
+    if start_hour == end_hour:
+        return False
+    if start_hour < end_hour:
+        return start_hour <= hour < end_hour
+    return hour >= start_hour or hour < end_hour
+
+
+def _fresh_morning_catchup_marker_path(now: datetime) -> Path:
+    date_key = now.astimezone(KST).strftime("%Y%m%d")
+    return AUTOMATION_OUTPUT_DIR / "fresh_watch_runs" / f"morning_catchup_{date_key}.done"
 
 
 def _handle_rank_candidates(args: argparse.Namespace) -> None:

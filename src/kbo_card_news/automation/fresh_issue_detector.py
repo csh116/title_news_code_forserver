@@ -117,10 +117,19 @@ def watch_fresh_once(
     source_db_path: str | Path = SOURCE_DB_PATH,
     config: FreshIssueDetectorConfig | None = None,
     now: datetime | None = None,
+    collection_window_start: datetime | None = None,
+    collection_window_end: datetime | None = None,
 ) -> FreshWatchResult:
     config = config or FreshIssueDetectorConfig()
     current = _normalize_now(now)
-    collection_start = current - timedelta(minutes=max(1, int(config.collection_window_minutes)))
+    collection_start = (
+        _normalize_now(collection_window_start)
+        if collection_window_start
+        else current - timedelta(minutes=max(1, int(config.collection_window_minutes)))
+    )
+    collection_end = _normalize_now(collection_window_end) if collection_window_end else current
+    if collection_start >= collection_end:
+        raise ValueError("collection_window_start must be earlier than collection_window_end")
     context_start = current - timedelta(hours=max(1, int(config.context_window_hours)))
     run_dir = _fresh_run_dir(current)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -130,12 +139,12 @@ def watch_fresh_once(
     with SQLiteSourceItemRepository(str(Path(source_db_path).expanduser())) as source_repository:
         collector_result = CollectorService(build_news_collectors()).collect_all(
             window_start=collection_start,
-            window_end=current,
+            window_end=collection_end,
         )
         ingestion_result = SourceItemIngestionService(repository=source_repository).ingest(collector_result.items)
         source_repository.save_collection_window(
             window_start=collection_start,
-            window_end=current,
+            window_end=collection_end,
             status="completed" if not collector_result.errors else "partial",
             item_count=len(collector_result.items),
             inserted_count=len(ingestion_result.inserted),
@@ -195,7 +204,7 @@ def watch_fresh_once(
             fingerprint=fingerprint,
             config=config,
             collection_start=collection_start,
-            collection_end=current,
+            collection_end=collection_end,
             context_start=context_start,
             context_end=current,
         )
@@ -207,7 +216,7 @@ def watch_fresh_once(
     _write_choice_json(choice_json_path, candidates=selected_candidates or candidates)
     result = FreshWatchResult(
         collection_window_start=collection_start,
-        collection_window_end=current,
+        collection_window_end=collection_end,
         context_window_start=context_start,
         context_window_end=current,
         collected_count=len(collector_result.items),
