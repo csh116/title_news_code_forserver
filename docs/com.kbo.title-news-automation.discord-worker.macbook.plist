@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kbo.title-news-automation.discord-worker</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/wonjaechoi/kbo/title_news_code</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>SSL_CERT_FILE</key>
+    <string>/usr/local/etc/ca-certificates/cert.pem</string>
+    <key>REQUESTS_CA_BUNDLE</key>
+    <string>/usr/local/etc/ca-certificates/cert.pem</string>
+  </dict>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>PYTHONDONTWRITEBYTECODE=1</string>
+    <string>PYTHONPATH=src</string>
+    <string>python3.11</string>
+    <string>-m</string>
+    <string>kbo_card_news.automation.cli</string>
+    <string>discord-button-worker</string>
+    <string>--auto-build</string>
+    <string>--notify-build</string>
+    <string>--host</string>
+    <string>0.0.0.0</string>
+    <string>--public-host</string>
+    <string>100.73.65.42</string>
+    <string>--port</string>
+    <string>8787</string>
+    <string>--build-lock-path</string>
+    <string>/Users/wonjaechoi/kbo/title_news_code/outputs/automation/locks/editor_build.lock</string>
+  </array>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/wonjaechoi/kbo/title_news_code/outputs/automation/logs/discord-worker.launchd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/wonjaechoi/kbo/title_news_code/outputs/automation/logs/discord-worker.launchd.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kbo.title-news-automation.watcher</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/wonjaechoi/kbo/title_news_code</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>SSL_CERT_FILE</key>
+    <string>/usr/local/etc/ca-certificates/cert.pem</string>
+    <key>REQUESTS_CA_BUNDLE</key>
+    <string>/usr/local/etc/ca-certificates/cert.pem</string>
+  </dict>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>PYTHONDONTWRITEBYTECODE=1</string>
+    <string>PYTHONPATH=src</string>
+    <string>python3.11</string>
+    <string>-m</string>
+    <string>kbo_card_news.automation.cli</string>
+    <string>watch-cycle</string>
+    <string>--candidate-count</string>
+    <string>10</string>
+    <string>--max-candidates</string>
+    <string>10</string>
+    <string>--notify</string>
+    <string>--no-start-button-worker</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/wonjaechoi/kbo/title_news_code/outputs/automation/logs/watcher.launchd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/wonjaechoi/kbo/title_news_code/outputs/automation/logs/watcher.launchd.err.log</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
