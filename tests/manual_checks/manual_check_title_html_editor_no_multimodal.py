@@ -932,7 +932,15 @@ class EditorServer:
         if not font_path_text:
             handler.send_error(404)
             return
-        self._send_file(handler, Path(font_path_text), "font/otf")
+        font_path = Path(font_path_text)
+        content_type = {
+            ".otf": "font/otf",
+            ".ttf": "font/ttf",
+            ".ttc": "font/collection",
+            ".woff": "font/woff",
+            ".woff2": "font/woff2",
+        }.get(font_path.suffix.lower(), "application/octet-stream")
+        self._send_file(handler, font_path, content_type)
 
     def _render_state(self, state: dict[str, Any]) -> dict[str, Any]:
         topic_index = int(state.get("topic_index") or 1)

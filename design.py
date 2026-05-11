@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Tuple
@@ -53,8 +54,16 @@ DEFAULT_INSTAGRAM_HANDLE = "@news_kbo"
 MAX_HEADLINE_CHARS = 7
 MAX_SUBHEADLINE_LINES = 2
 
+USER_FONT_DIR = Path.home() / "Library" / "Fonts"
+
 FONT_CANDIDATES = {
     "bold": [
+        Path(os.environ["KBO_TITLE_FONT_BOLD"]).expanduser() if os.environ.get("KBO_TITLE_FONT_BOLD") else None,
+        USER_FONT_DIR / "esamanru OTF Bold.otf",
+        USER_FONT_DIR / "이사만루OTF Bold.otf",
+        USER_FONT_DIR / "이사만루OTF B.otf",
+        USER_FONT_DIR / "IsamanruOTF Bold.otf",
+        USER_FONT_DIR / "IsamanruOTF B.otf",
         Path("/Users/s.h.choi/Library/Fonts/esamanru OTF Bold.otf"),
         Path("/Users/s.h.choi/Library/Fonts/이사만루OTF Bold.otf"),
         Path("/Users/s.h.choi/Library/Fonts/이사만루OTF B.otf"),
@@ -62,22 +71,36 @@ FONT_CANDIDATES = {
         Path("/Users/s.h.choi/Library/Fonts/IsamanruOTF B.otf"),
         Path("/Library/Fonts/이사만루OTF Bold.otf"),
         Path("/Library/Fonts/이사만루OTF B.otf"),
+        Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
     ],
     "medium": [
+        Path(os.environ["KBO_TITLE_FONT_MEDIUM"]).expanduser() if os.environ.get("KBO_TITLE_FONT_MEDIUM") else None,
+        USER_FONT_DIR / "esamanru OTF Medium.otf",
+        USER_FONT_DIR / "esamanru OTF Bold.otf",
+        USER_FONT_DIR / "이사만루OTF Medium.otf",
+        USER_FONT_DIR / "이사만루OTF Regular.otf",
         Path("/Users/s.h.choi/Library/Fonts/esamanru OTF Medium.otf"),
         Path("/Users/s.h.choi/Library/Fonts/esamanru OTF Bold.otf"),
         Path("/Users/s.h.choi/Library/Fonts/이사만루OTF Medium.otf"),
         Path("/Users/s.h.choi/Library/Fonts/이사만루OTF Regular.otf"),
+        Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
     ],
     "light": [
+        Path(os.environ["KBO_TITLE_FONT_LIGHT"]).expanduser() if os.environ.get("KBO_TITLE_FONT_LIGHT") else None,
+        USER_FONT_DIR / "esamanru OTF Light.otf",
+        USER_FONT_DIR / "esamanru OTF Medium.otf",
+        USER_FONT_DIR / "esamanru OTF Bold.otf",
+        USER_FONT_DIR / "이사만루OTF Light.otf",
+        USER_FONT_DIR / "이사만루OTF Regular.otf",
         Path("/Users/s.h.choi/Library/Fonts/esamanru OTF Light.otf"),
         Path("/Users/s.h.choi/Library/Fonts/esamanru OTF Medium.otf"),
         Path("/Users/s.h.choi/Library/Fonts/esamanru OTF Bold.otf"),
         Path("/Users/s.h.choi/Library/Fonts/이사만루OTF Light.otf"),
         Path("/Users/s.h.choi/Library/Fonts/이사만루OTF Regular.otf"),
+        Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
     ],
 }
-FALLBACK_FONT = "/Users/s.h.choi/Library/Fonts/Pretendard-Bold.otf"
+FALLBACK_FONT = str(USER_FONT_DIR / "Pretendard-Bold.otf")
 
 
 # =========================
@@ -143,6 +166,8 @@ def blend_color(color: Tuple[int, int, int], target: Tuple[int, int, int], amoun
 
 def resolve_font_path(weight: str = "bold") -> Optional[str]:
     for candidate in FONT_CANDIDATES.get(weight, []):
+        if candidate is None:
+            continue
         if candidate.exists():
             return str(candidate)
     fallback = Path(FALLBACK_FONT)
