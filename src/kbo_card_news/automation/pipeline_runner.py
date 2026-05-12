@@ -127,6 +127,12 @@ def confirm_topic_candidates(
 ) -> TopicConfirmationResult:
     choice_path = Path(choice_json_path).expanduser()
     payload = json.loads(choice_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("choice_json_path must contain a JSON object")
+    if not payload.get("candidate_report_path"):
+        fallback_report_path = _ensure_fresh_choice_candidate_report(choice_path, payload)
+        if fallback_report_path is not None:
+            payload["candidate_report_path"] = str(fallback_report_path)
     candidates = payload.get("candidates") or []
     if not isinstance(candidates, list) or not candidates:
         raise ValueError(f"no candidates found in {choice_path}")
@@ -279,9 +285,67 @@ def _infer_approval_run_dir(path: Path) -> Path:
     for parent in [resolved.parent, *resolved.parents]:
         if parent.name.startswith("approval_run_"):
             return parent
-    if resolved.name == "topic_selection_choice.json" and resolved.parent.parent.name == "fresh_watch_runs":
+    if resolved.name == "topic_selection_choice.json" and resolved.parent.parent.name.startswith("fresh_watch_runs"):
         return resolved.parent
     raise ValueError(f"could not infer approval run dir from path: {path}")
+
+
+def _ensure_fresh_choice_candidate_report(choice_path: Path, payload: dict[str, Any]) -> Path | None:
+    resolved = choice_path.resolve()
+    if resolved.name != "topic_selection_choice.json" or not resolved.parent.parent.name.startswith("fresh_watch_runs"):
+        return None
+    report_path = resolved.parent / "topic_candidates_report.json"
+    fresh_report_path = resolved.parent / "fresh_window_decision_report.json"
+    fresh_report: dict[str, Any] = {}
+    if fresh_report_path.exists():
+        loaded = json.loads(fresh_report_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            fresh_report = loaded
+    candidates = payload.get("candidates") or []
+    if not isinstance(candidates, list):
+        candidates = []
+    topics: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        if not isinstance(candidate, dict):
+            continue
+        topics.append(
+            {
+                "topic_id": str(candidate.get("topic_id") or ""),
+                "topic_name": str(candidate.get("topic_name") or ""),
+                "importance_rank": int(candidate.get("importance_rank") or index),
+                "topic_score": float(candidate.get("topic_score") or 0.0),
+                "reason_summary": str(candidate.get("reason_summary") or ""),
+                "article_ids": [str(item) for item in candidate.get("article_ids", [])],
+                "representative_article_id": candidate.get("representative_article_id"),
+                "metadata": dict(candidate.get("metadata") or {}),
+            }
+        )
+    report = {
+        "window_start_kst": str(fresh_report.get("collection_window_start") or ""),
+        "window_end_kst": str(fresh_report.get("collection_window_end") or ""),
+        "candidate_count": len(topics),
+        "collection_db_path": str(OUTPUT_ROOT / "source_collection.db"),
+        "collection_missing_windows": [],
+        "collection_skipped_window_count": 0,
+        "collected_count": fresh_report.get("collected_count"),
+        "inserted_count": fresh_report.get("inserted_count"),
+        "duplicate_count": fresh_report.get("duplicate_count"),
+        "collector_errors": fresh_report.get("collector_errors") or [],
+        "batch_article_count": fresh_report.get("target_article_count") or 0,
+        "batch_metadata": {"source": "fresh_window_decision", "run_dir": str(resolved.parent)},
+        "completed_topic_registry_count": 0,
+        "excluded_completed_topics": [],
+        "selection_result": {
+            "batch_id": f"{resolved.parent.name}:fresh-window-publish",
+            "model_name": str(fresh_report.get("model_name") or ""),
+            "prompt_version": str(fresh_report.get("prompt_version") or ""),
+            "topics": topics,
+            "raw_payload": {"source": "fresh_choice_fallback"},
+            "created_at": str(fresh_report.get("collection_window_end") or ""),
+        },
+    }
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report_path
 
 
 def _run_python_script(

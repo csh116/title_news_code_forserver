@@ -258,6 +258,7 @@ def watch_fresh_window_once(
     prompt_path = run_dir / "fresh_window_decision_prompt.json"
     response_path = run_dir / "fresh_window_decision_response.json"
     choice_json_path = run_dir / "topic_selection_choice.json"
+    candidate_report_path = run_dir / "topic_candidates_report.json"
 
     with SQLiteSourceItemRepository(str(Path(source_db_path).expanduser())) as source_repository:
         collector_result = CollectorService(build_news_collectors()).collect_all(
@@ -437,7 +438,22 @@ def watch_fresh_window_once(
         created_jobs.append(created)
         publish_decisions.append(decision)
 
-    _write_choice_json(choice_json_path, decisions=publish_decisions, article_lookup=article_lookup)
+    _write_compatible_candidate_report(
+        candidate_report_path,
+        decisions=publish_decisions,
+        article_lookup=article_lookup,
+        source_db_path=Path(source_db_path).expanduser(),
+        collection_start=collection_start,
+        collection_end=collection_end,
+        model_result=model_result,
+        run_id=run_id,
+    )
+    _write_choice_json(
+        choice_json_path,
+        decisions=publish_decisions,
+        article_lookup=article_lookup,
+        candidate_report_path=candidate_report_path,
+    )
     result = FreshWindowDecisionResult(
         collection_window_start=collection_start,
         collection_window_end=collection_end,
@@ -783,8 +799,10 @@ def _write_choice_json(
     *,
     decisions: list[FreshWindowTopicDecision],
     article_lookup: dict[str, BatchArticleCandidate],
+    candidate_report_path: Path | None = None,
 ) -> None:
     payload = {
+        "candidate_report_path": str(candidate_report_path) if candidate_report_path else None,
         "required_selection_count": 1 if decisions else 0,
         "selected_topic_ids": [],
         "candidates": [
@@ -806,6 +824,64 @@ def _write_choice_json(
             }
             for index, decision in enumerate(decisions, start=1)
         ],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _write_compatible_candidate_report(
+    path: Path,
+    *,
+    decisions: list[FreshWindowTopicDecision],
+    article_lookup: dict[str, BatchArticleCandidate],
+    source_db_path: Path,
+    collection_start: datetime,
+    collection_end: datetime,
+    model_result: FreshWindowDecisionModelResult,
+    run_id: str,
+) -> None:
+    topics = []
+    for index, decision in enumerate(decisions, start=1):
+        topic_id = f"fresh-decision-{hash_parts([decision.dedupe_key, decision.group_key, decision.topic_name])}"
+        topics.append(
+            {
+                "topic_id": topic_id,
+                "topic_name": decision.topic_name,
+                "importance_rank": index,
+                "topic_score": decision.issue_score,
+                "reason_summary": decision.reason_summary,
+                "article_ids": list(decision.target_article_ids),
+                "representative_article_id": decision.representative_article_id,
+                "metadata": {
+                    "article_publication_summary": {
+                        "articles": [_article_summary(article) for article in _decision_articles(decision, article_lookup=article_lookup)[:5]],
+                    },
+                    "fresh_window_decision": asdict(decision),
+                },
+            }
+        )
+    payload = {
+        "window_start_kst": collection_start.isoformat(),
+        "window_end_kst": collection_end.isoformat(),
+        "candidate_count": len(decisions),
+        "collection_db_path": str(source_db_path),
+        "collection_missing_windows": [],
+        "collection_skipped_window_count": 0,
+        "collected_count": None,
+        "inserted_count": None,
+        "duplicate_count": None,
+        "collector_errors": [],
+        "batch_article_count": len({article_id for decision in decisions for article_id in decision.target_article_ids}),
+        "batch_metadata": {"source": "fresh_window_decision", "run_id": run_id},
+        "completed_topic_registry_count": 0,
+        "excluded_completed_topics": [],
+        "selection_result": {
+            "batch_id": f"{run_id}:fresh-window-publish",
+            "model_name": model_result.model_name,
+            "prompt_version": model_result.prompt_version,
+            "topics": topics,
+            "raw_payload": model_result.raw_payload,
+            "created_at": datetime.now(KST).isoformat(),
+        },
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

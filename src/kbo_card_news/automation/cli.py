@@ -1678,7 +1678,7 @@ def _approval_run_dir_from_choice_path(choice_json_path: str) -> str:
     for parent in [path.parent, *path.parents]:
         if parent.name.startswith("approval_run_"):
             return str(parent)
-    if path.name == "topic_selection_choice.json" and path.parent.parent.name == "fresh_watch_runs":
+    if path.name == "topic_selection_choice.json" and path.parent.parent.name.startswith("fresh_watch_runs"):
         return str(path.parent)
     # Existing test/automation runs may not use approval_run_* names.
     if path.parent.name == "01_topic_candidates":
