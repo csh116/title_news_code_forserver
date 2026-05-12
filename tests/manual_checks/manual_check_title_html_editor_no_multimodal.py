@@ -1230,13 +1230,14 @@ _EDITOR_HTML = r"""<!doctype html>
   <style>
     :root { --panel: #151515; --line: #303030; --text: #f5f0e8; --muted: #a8a095; --accent: #e85d2a; }
     * { box-sizing: border-box; }
+    html, body { overscroll-behavior: none; }
     body { margin: 0; background: #0b0b0b; color: var(--text); font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; }
     .app { display: grid; grid-template-columns: minmax(560px, 1fr) 420px; gap: 18px; height: 100vh; padding: 18px; }
-    .stageWrap { min-height: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 20%, #2d2b28, #090909 68%); border: 1px solid var(--line); border-radius: 24px; overflow: auto; }
+    .stageWrap { min-height: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 20%, #2d2b28, #090909 68%); border: 1px solid var(--line); border-radius: 24px; overflow: auto; overscroll-behavior: contain; }
     __FONT_FACE_CSS__
     .stageViewport { width: 562px; height: 702px; flex: 0 0 auto; }
     .stage { width: 1080px; height: 1350px; position: relative; background: var(--team, #111); overflow: hidden; transform: scale(var(--preview-scale, .52)); transform-origin: top left; color: white; font-family: BodyFont, sans-serif; }
-    .photo { position: absolute; left: 20px; top: 26px; width: 1040px; height: 1298px; overflow: hidden; border-radius: 138px; background: #111; cursor: grab; }
+    .photo { position: absolute; left: 20px; top: 26px; width: 1040px; height: 1298px; overflow: hidden; border-radius: 138px; background: #111; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
     .photo:active { cursor: grabbing; }
     .photo img { position: absolute; left: 50%; bottom: 0; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; transform-origin: center bottom; filter: blur(.3px); user-select: none; pointer-events: none; }
     .topDim { position:absolute; inset:0; background: linear-gradient(to bottom, rgba(0,0,0,.07), rgba(0,0,0,0) 28%); pointer-events: none; }
@@ -1253,7 +1254,7 @@ _EDITOR_HTML = r"""<!doctype html>
     label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 5px; }
     input, textarea, select, button { width: 100%; border: 1px solid #3b3b3b; border-radius: 10px; background: #0d0d0d; color: var(--text); padding: 10px; font: inherit; }
     textarea { min-height: 84px; resize: vertical; }
-    button { background: var(--accent); border: 0; color: #120700; font-weight: 800; cursor: pointer; }
+    button { background: var(--accent); border: 0; color: #120700; font-weight: 800; cursor: pointer; touch-action: manipulation; }
     button.secondary { background: #242424; color: var(--text); border: 1px solid #3b3b3b; }
     .assets { overflow: auto; min-height: 0; flex: 1; padding-right: 4px; }
     .asset { display: grid; grid-template-columns: 92px 1fr; gap: 10px; padding: 9px; border: 1px solid var(--line); border-radius: 14px; margin-bottom: 10px; cursor: pointer; background: #101010; }
@@ -1265,6 +1266,35 @@ _EDITOR_HTML = r"""<!doctype html>
     .navRow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .navRow button:disabled { opacity: .35; cursor: not-allowed; }
     .status { font-size: 12px; color: var(--muted); min-height: 18px; }
+    .mobileOnly { display: none; }
+    details.tuning summary { cursor: pointer; color: #fff; font-weight: 800; list-style: none; padding: 4px 0 10px; }
+    details.tuning summary::-webkit-details-marker { display: none; }
+    .assetSheet { display: none; position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.72); }
+    .assetSheet.open { display: block; }
+    .assetSheetPanel { position: absolute; left: 0; right: 0; bottom: 0; max-height: 82dvh; background: #111; border-top: 1px solid var(--line); border-radius: 20px 20px 0 0; padding: 14px; overflow: auto; }
+    .assetSheetHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .assetSheetHeader h2 { margin: 0; font-size: 16px; }
+    .assetSheetHeader button { width: auto; padding: 10px 14px; }
+    .mobileAssetGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .mobileAssetGrid .asset { display: block; margin: 0; padding: 8px; border-radius: 12px; }
+    .mobileAssetGrid .asset img { width: 100%; height: auto; aspect-ratio: 1 / 1; border-radius: 10px; }
+    .mobileAssetGrid .asset strong { font-size: 12px; margin-top: 7px; }
+    .mobileAssetGrid .asset span { display: none; }
+    @media (max-width: 760px) {
+      body { overflow: hidden; }
+      .app { display: flex; flex-direction: column; height: 100dvh; gap: 8px; padding: 8px; }
+      .stageWrap { flex: 1 1 auto; min-height: 0; border-radius: 14px; overflow: hidden; }
+      .side { flex: 0 0 auto; min-height: auto; max-height: 42dvh; overflow: auto; gap: 8px; padding-bottom: 2px; }
+      .panel { border-radius: 12px; padding: 10px; }
+      .panel h2 { margin-bottom: 8px; }
+      label { margin: 8px 0 4px; }
+      input, textarea, select, button { min-height: 44px; border-radius: 9px; padding: 9px; }
+      textarea { min-height: 62px; }
+      .assetListPanel { display: none; }
+      .mobileOnly { display: block; }
+      .row { gap: 6px; }
+      .title { letter-spacing: -7.5px; }
+    }
   </style>
 </head>
 <body>
@@ -1294,15 +1324,19 @@ _EDITOR_HTML = r"""<!doctype html>
       </section>
       <section class="panel">
         <h2>Image transform</h2>
-        <label>Scale <span id="scaleValue"></span></label>
-        <input id="scaleInput" type="range" min="0.7" max="2.2" step="0.01">
-        <div class="row">
-          <div><label>X</label><input id="xInput" type="range" min="-400" max="400" step="1"></div>
-          <div><label>Y</label><input id="yInput" type="range" min="-400" max="400" step="1"></div>
-        </div>
+        <button class="secondary mobileOnly" id="openAssetsBtn" type="button">사진 변경</button>
+        <details class="tuning" id="tuningDetails" open>
+          <summary>세부 조정 · Scale <span id="scaleValue"></span></summary>
+          <label>Scale <span id="scaleValueDesktop"></span></label>
+          <input id="scaleInput" type="range" min="0.7" max="2.2" step="0.01">
+          <div class="row">
+            <div><label>X</label><input id="xInput" type="range" min="-400" max="400" step="1"></div>
+            <div><label>Y</label><input id="yInput" type="range" min="-400" max="400" step="1"></div>
+          </div>
+        </details>
         <button class="secondary" id="resetBtn" type="button">이미지 위치 초기화</button>
       </section>
-      <section class="panel assets" id="assetList"></section>
+      <section class="panel assets assetListPanel" id="assetList"></section>
       <section class="panel">
         <div class="navRow">
           <button class="secondary" id="prevTopicBtn" type="button">이전 토픽</button>
@@ -1312,6 +1346,15 @@ _EDITOR_HTML = r"""<!doctype html>
         <p class="status" id="status"></p>
       </section>
     </aside>
+  </div>
+  <div class="assetSheet" id="assetSheet" aria-hidden="true">
+    <div class="assetSheetPanel">
+      <div class="assetSheetHeader">
+        <h2>사진 선택</h2>
+        <button class="secondary" id="closeAssetsBtn" type="button">닫기</button>
+      </div>
+      <div class="mobileAssetGrid" id="mobileAssetList"></div>
+    </div>
   </div>
   <script>
     const editorToken = new URLSearchParams(location.search).get("token") || "";
@@ -1354,6 +1397,7 @@ _EDITOR_HTML = r"""<!doctype html>
       $("hero").src = assetUrl(state.selectedAssetIndex);
       $("hero").style.transform = `translate(calc(-50% + ${state.x}px), ${state.y}px) scale(${state.scale})`;
       $("scaleValue").textContent = state.scale.toFixed(2);
+      $("scaleValueDesktop").textContent = state.scale.toFixed(2);
       document.querySelectorAll(".asset").forEach((node) => {
         node.classList.toggle("selected", Number(node.dataset.index) === state.selectedAssetIndex);
       });
@@ -1370,26 +1414,34 @@ _EDITOR_HTML = r"""<!doctype html>
       $("stage").style.setProperty("--preview-scale", String(scale));
     }
 
+    function buildAssetNode(asset, index, options = {}) {
+      const item = document.createElement("div");
+      item.className = "asset";
+      item.dataset.index = String(index);
+      const sourceName = asset.source_site_name || asset.source_type || "";
+      const sourceLabel = sourceName ? ` · ${sourceName}` : "";
+      item.innerHTML = `<img src="${assetUrl(index)}"><div><strong>#${index} ${asset.asset_type || "image"}${sourceLabel}</strong><span>${asset.origin_url || asset.storage_path || ""}</span></div>`;
+      item.addEventListener("click", () => {
+        state.selectedAssetIndex = index;
+        state.scale = 1;
+        state.x = 0;
+        state.y = 0;
+        syncInputs();
+        apply();
+        if (options.closeSheet) closeAssetSheet();
+      });
+      return item;
+    }
+
     function renderAssets() {
       const list = $("assetList");
+      const mobileList = $("mobileAssetList");
       list.innerHTML = "<h2>Image candidates</h2>";
+      mobileList.innerHTML = "";
       payload.assets.forEach((asset, idx) => {
         const index = idx + 1;
-        const item = document.createElement("div");
-        item.className = "asset";
-        item.dataset.index = String(index);
-        const sourceName = asset.source_site_name || asset.source_type || "";
-        const sourceLabel = sourceName ? ` · ${sourceName}` : "";
-        item.innerHTML = `<img src="${assetUrl(index)}"><div><strong>#${index} ${asset.asset_type || "image"}${sourceLabel}</strong><span>${asset.origin_url || asset.storage_path || ""}</span></div>`;
-        item.addEventListener("click", () => {
-          state.selectedAssetIndex = index;
-          state.scale = 1;
-          state.x = 0;
-          state.y = 0;
-          syncInputs();
-          apply();
-        });
-        list.appendChild(item);
+        list.appendChild(buildAssetNode(asset, index));
+        mobileList.appendChild(buildAssetNode(asset, index, { closeSheet: true }));
       });
     }
 
@@ -1436,25 +1488,77 @@ _EDITOR_HTML = r"""<!doctype html>
       $("saveBtn").addEventListener("click", savePng);
       $("prevTopicBtn").addEventListener("click", () => moveTopic(-1));
       $("nextTopicBtn").addEventListener("click", () => moveTopic(1));
-      let dragging = false, lastX = 0, lastY = 0;
-      $("photo").addEventListener("pointerdown", (event) => { dragging = true; lastX = event.clientX; lastY = event.clientY; $("photo").setPointerCapture(event.pointerId); });
+      $("openAssetsBtn").addEventListener("click", openAssetSheet);
+      $("closeAssetsBtn").addEventListener("click", closeAssetSheet);
+      $("assetSheet").addEventListener("click", (event) => { if (event.target === $("assetSheet")) closeAssetSheet(); });
+      const activePointers = new Map();
+      let dragging = false, lastX = 0, lastY = 0, pinchDistance = 0, pinchScale = 1;
+      $("photo").addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        $("photo").setPointerCapture(event.pointerId);
+        if (activePointers.size === 1) {
+          dragging = true;
+          lastX = event.clientX;
+          lastY = event.clientY;
+        } else if (activePointers.size === 2) {
+          dragging = false;
+          pinchDistance = pointerDistance();
+          pinchScale = state.scale;
+        }
+      });
       $("photo").addEventListener("pointermove", (event) => {
-        if (!dragging) return;
+        if (!activePointers.has(event.pointerId)) return;
+        event.preventDefault();
+        activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
         const previewScale = Number($("stageViewport").dataset.scale || 1);
-        state.x += (event.clientX - lastX) / previewScale;
-        state.y += (event.clientY - lastY) / previewScale;
-        lastX = event.clientX;
-        lastY = event.clientY;
+        if (activePointers.size >= 2) {
+          const currentDistance = pointerDistance();
+          if (pinchDistance > 0) {
+            state.scale = Math.max(0.7, Math.min(2.2, pinchScale * (currentDistance / pinchDistance)));
+          }
+        } else if (dragging) {
+          state.x += (event.clientX - lastX) / previewScale;
+          state.y += (event.clientY - lastY) / previewScale;
+          lastX = event.clientX;
+          lastY = event.clientY;
+        }
         syncInputs();
         apply();
       });
-      $("photo").addEventListener("pointerup", () => { dragging = false; });
+      ["pointerup", "pointercancel", "lostpointercapture"].forEach((name) => {
+        $("photo").addEventListener(name, (event) => {
+          activePointers.delete(event.pointerId);
+          dragging = activePointers.size === 1;
+          if (dragging) {
+            const remaining = Array.from(activePointers.values())[0];
+            lastX = remaining.x;
+            lastY = remaining.y;
+          }
+        });
+      });
       $("photo").addEventListener("wheel", (event) => {
         event.preventDefault();
         state.scale = Math.max(0.7, Math.min(2.2, state.scale + (event.deltaY > 0 ? -0.04 : 0.04)));
         syncInputs();
         apply();
       }, { passive: false });
+    }
+
+    function pointerDistance() {
+      const points = Array.from(activePointers.values());
+      if (points.length < 2) return 0;
+      return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+    }
+
+    function openAssetSheet() {
+      $("assetSheet").classList.add("open");
+      $("assetSheet").setAttribute("aria-hidden", "false");
+    }
+
+    function closeAssetSheet() {
+      $("assetSheet").classList.remove("open");
+      $("assetSheet").setAttribute("aria-hidden", "true");
     }
 
     function moveTopic(delta) {
@@ -1484,6 +1588,9 @@ _EDITOR_HTML = r"""<!doctype html>
       syncInputs();
       wire();
       syncTopicNav();
+      if (window.matchMedia("(max-width: 760px)").matches) {
+        $("tuningDetails").open = false;
+      }
       resizePreview();
       window.addEventListener("resize", resizePreview);
       apply();
