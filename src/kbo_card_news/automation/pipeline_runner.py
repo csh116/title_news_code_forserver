@@ -279,6 +279,8 @@ def _infer_approval_run_dir(path: Path) -> Path:
     for parent in [resolved.parent, *resolved.parents]:
         if parent.name.startswith("approval_run_"):
             return parent
+    if resolved.name == "topic_selection_choice.json" and resolved.parent.parent.name == "fresh_watch_runs":
+        return resolved.parent
     raise ValueError(f"could not infer approval run dir from path: {path}")
 
 
