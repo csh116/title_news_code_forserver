@@ -32,9 +32,11 @@ from kbo_card_news.automation.news_watcher import (
 from kbo_card_news.automation.fresh_issue_detector import (
     KST,
     SOURCE_DB_PATH,
-    FreshIssueDetectorConfig,
-    fresh_watch_result_to_dict,
-    watch_fresh_once,
+)
+from kbo_card_news.automation.fresh_window_decision import (
+    FreshWindowDecisionConfig,
+    fresh_window_decision_result_to_dict,
+    watch_fresh_window_once,
 )
 from kbo_card_news.automation.topic_ranker import rank_candidate, rank_result_to_metadata
 from kbo_card_news.automation.discord_bot import (
@@ -198,10 +200,15 @@ def build_parser() -> argparse.ArgumentParser:
     fresh_parser.add_argument("--collection-window-minutes", type=int, default=10)
     fresh_parser.add_argument("--context-window-hours", type=int, default=24)
     fresh_parser.add_argument("--duplicate-lookback-hours", type=int, default=72)
-    fresh_parser.add_argument("--min-issue-score", type=float, default=65.0)
-    fresh_parser.add_argument("--max-jobs", type=int, default=5)
-    fresh_parser.add_argument("--gemini-review", dest="gemini_review", action="store_true", default=True)
-    fresh_parser.add_argument("--no-gemini-review", dest="gemini_review", action="store_false")
+    fresh_parser.add_argument("--feedback-lookback-days", type=int, default=90)
+    fresh_parser.add_argument("--fresh-decision-model", default="gemini-3.1-flash-lite-preview")
+    fresh_parser.add_argument("--max-target-articles-per-call", type=int, default=40)
+    fresh_parser.add_argument("--max-context-articles", type=int, default=180)
+    fresh_parser.add_argument("--max-feedback-examples", type=int, default=40)
+    fresh_parser.add_argument("--min-issue-score", type=float, default=None, help=argparse.SUPPRESS)
+    fresh_parser.add_argument("--max-jobs", type=int, default=None, help=argparse.SUPPRESS)
+    fresh_parser.add_argument("--gemini-review", dest="gemini_review", action="store_true", default=True, help=argparse.SUPPRESS)
+    fresh_parser.add_argument("--no-gemini-review", dest="gemini_review", action="store_false", help=argparse.SUPPRESS)
     fresh_parser.add_argument("--notify", action="store_true")
     fresh_parser.add_argument("--channel-id")
     fresh_parser.add_argument("--bot-token")
@@ -748,6 +755,8 @@ def _run_watch_cycle_under_lock(repository: AutomationJobRepository, args: argpa
 
 
 def _handle_watch_fresh_cycle(repository: AutomationJobRepository, args: argparse.Namespace) -> None:
+    if args.gemini_review is False:
+        raise SystemExit("watch-fresh-cycle requires Gemini fresh window decision gate; --no-gemini-review is no longer supported.")
     schedule = _fresh_cycle_schedule_decision(
         now=datetime.now(KST),
         quiet_start_hour=args.quiet_start_hour,
@@ -789,7 +798,8 @@ def _handle_watch_fresh_cycle(repository: AutomationJobRepository, args: argpars
     print(f"choice_json_path={payload['choice_json_path']}")
     print(f"collected_count={payload['collected_count']}")
     print(f"inserted_count={payload['inserted_count']}")
-    print(f"candidate_count={payload['candidate_count']}")
+    print(f"target_article_count={payload['target_article_count']}")
+    print(f"decision_count={payload['decision_count']}")
     print(f"created_count={payload['created_count']}")
     print(f"duplicate_job_count={payload['duplicate_job_count']}")
     print(f"notified_count={payload['notified_count']}")
@@ -807,13 +817,15 @@ def _run_watch_fresh_cycle_under_lock(
         quiet_start_hour=args.quiet_start_hour,
         quiet_end_hour=args.quiet_end_hour,
     )
-    config = FreshIssueDetectorConfig(
+    config = FreshWindowDecisionConfig(
         collection_window_minutes=args.collection_window_minutes,
         context_window_hours=args.context_window_hours,
         duplicate_lookback_hours=args.duplicate_lookback_hours,
-        min_issue_score=args.min_issue_score,
-        max_jobs=args.max_jobs,
-        gemini_review_enabled=args.gemini_review,
+        feedback_lookback_days=args.feedback_lookback_days,
+        max_target_articles_per_call=args.max_target_articles_per_call,
+        max_context_articles=args.max_context_articles,
+        max_feedback_examples=args.max_feedback_examples,
+        model_name=args.fresh_decision_model,
     )
     marker_path = Path(str(schedule["marker_path"])) if schedule.get("marker_path") else None
     if marker_path is not None and marker_path.exists():
@@ -835,7 +847,7 @@ def _run_watch_fresh_cycle_under_lock(
         if schedule.get("collection_window_end")
         else None
     )
-    result = watch_fresh_once(
+    result = watch_fresh_window_once(
         job_repository=repository,
         source_db_path=args.source_db_path,
         config=config,
@@ -882,7 +894,7 @@ def _run_watch_fresh_cycle_under_lock(
                 )
         if notified_count and not args.dry_run_notify and not args.no_start_button_worker:
             button_worker = _ensure_button_worker_from_args(repository, args)
-    payload = fresh_watch_result_to_dict(result)
+    payload = fresh_window_decision_result_to_dict(result)
     payload.update(
         {
             "status": "completed",

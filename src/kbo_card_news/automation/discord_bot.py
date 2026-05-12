@@ -57,6 +57,8 @@ def resolve_discord_bot_config(
 
 
 def build_job_message(job: AutomationJob) -> str:
+    if (job.metadata or {}).get("source") == "watch_fresh_window_once":
+        return build_fresh_window_decision_job_message(job)
     if (job.metadata or {}).get("source") == "watch_fresh_once":
         return build_fresh_issue_job_message(job)
     level_label = {
@@ -137,6 +139,44 @@ def build_fresh_issue_job_message(job: AutomationJob) -> str:
         lines.append("세부: " + " / ".join(str(value) for value in reasons[:3]))
     if risks:
         lines.append("리스크: " + " / ".join(str(value) for value in risks[:3]))
+    lines.extend(["", "기사", *article_lines])
+    return "\n".join(lines)[:1700]
+
+
+def build_fresh_window_decision_job_message(job: AutomationJob) -> str:
+    metadata = job.metadata or {}
+    level_label = {
+        "immediate": "강한 이슈",
+        "watch": "확인 후보",
+        "digest": "묶어서 확인",
+    }.get(job.notification_level, job.notification_level)
+    risks = metadata.get("risk_flags") if isinstance(metadata.get("risk_flags"), list) else []
+    target_count = metadata.get("target_article_count", 0)
+    related_count = metadata.get("related_article_count", 0)
+
+    article_lines = []
+    for index, article in enumerate(job.articles[:5], start=1):
+        title = _truncate(article.title, 70)
+        if article.source_url:
+            article_lines.append(f"{index}. {title}\n{article.source_url}")
+        else:
+            article_lines.append(f"{index}. {title}")
+    if not article_lines:
+        article_lines.append("근거 기사 정보 없음")
+
+    lines = [
+        f"[{level_label}]",
+        _truncate(job.topic_name, 90),
+        "",
+        f"점수: {job.virality_potential_score:.0f}",
+        "판단: Gemini fresh window gate",
+    ]
+    if job.recommendation_summary:
+        lines.append("근거: " + _truncate(job.recommendation_summary, 240))
+    if risks:
+        lines.append("리스크: " + " / ".join(str(value) for value in risks[:4]))
+    lines.append(f"target 기사: {target_count}건")
+    lines.append(f"관련 기사: {related_count}건")
     lines.extend(["", "기사", *article_lines])
     return "\n".join(lines)[:1700]
 

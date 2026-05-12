@@ -102,6 +102,28 @@ class AutomationJobEvent:
     created_at: datetime
 
 
+@dataclass(slots=True)
+class FreshWindowDecisionRecord:
+    id: int | None
+    run_id: str
+    decision: str
+    issue_score: float
+    notification_level: str
+    topic_name: str
+    group_key: str
+    dedupe_key: str
+    representative_article_id: str
+    target_article_ids: list[str]
+    related_article_ids: list[str]
+    reason_summary: str
+    risk_flags: list[str]
+    model_name: str
+    prompt_version: str
+    raw_decision: dict[str, Any]
+    created_job_id: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+
+
 class AutomationJobRepository:
     def __init__(self, db_path: str | Path = AUTOMATION_STATE_DB_PATH) -> None:
         self.db_path = Path(db_path).expanduser()
@@ -180,6 +202,36 @@ class AutomationJobRepository:
 
             CREATE INDEX IF NOT EXISTS idx_automation_job_events_job_id
             ON automation_job_events(job_id, id);
+
+            CREATE TABLE IF NOT EXISTS fresh_window_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                issue_score REAL NOT NULL DEFAULT 0,
+                notification_level TEXT NOT NULL DEFAULT 'watch',
+                topic_name TEXT NOT NULL DEFAULT '',
+                group_key TEXT NOT NULL DEFAULT '',
+                dedupe_key TEXT NOT NULL DEFAULT '',
+                representative_article_id TEXT NOT NULL DEFAULT '',
+                target_article_ids_json TEXT NOT NULL DEFAULT '[]',
+                related_article_ids_json TEXT NOT NULL DEFAULT '[]',
+                reason_summary TEXT NOT NULL DEFAULT '',
+                risk_flags_json TEXT NOT NULL DEFAULT '[]',
+                model_name TEXT NOT NULL DEFAULT '',
+                prompt_version TEXT NOT NULL DEFAULT '',
+                raw_decision_json TEXT NOT NULL DEFAULT '{}',
+                created_job_id TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fresh_window_decisions_decision_created
+            ON fresh_window_decisions(decision, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_fresh_window_decisions_group_key
+            ON fresh_window_decisions(group_key, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_fresh_window_decisions_dedupe_key
+            ON fresh_window_decisions(dedupe_key, created_at);
             """
         )
         self._connection.commit()
@@ -433,6 +485,83 @@ class AutomationJobRepository:
         ).fetchall()
         return [self._event_from_row(row) for row in rows]
 
+    def create_fresh_window_decision(self, record: FreshWindowDecisionRecord) -> FreshWindowDecisionRecord:
+        with self._connection:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO fresh_window_decisions (
+                    run_id, decision, issue_score, notification_level, topic_name,
+                    group_key, dedupe_key, representative_article_id,
+                    target_article_ids_json, related_article_ids_json, reason_summary,
+                    risk_flags_json, model_name, prompt_version, raw_decision_json,
+                    created_job_id, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.decision,
+                    float(record.issue_score),
+                    record.notification_level,
+                    record.topic_name,
+                    record.group_key,
+                    record.dedupe_key,
+                    record.representative_article_id,
+                    _json_dumps_list(record.target_article_ids),
+                    _json_dumps_list(record.related_article_ids),
+                    record.reason_summary,
+                    _json_dumps_list(record.risk_flags),
+                    record.model_name,
+                    record.prompt_version,
+                    _json_dumps(record.raw_decision),
+                    record.created_job_id,
+                    _format_datetime(record.created_at),
+                ),
+            )
+        stored = self.get_fresh_window_decision(int(cursor.lastrowid))
+        if stored is None:
+            raise KeyError(f"fresh window decision not found after insert: {cursor.lastrowid}")
+        return stored
+
+    def update_fresh_window_decision_job(self, decision_id: int, job_id: str) -> None:
+        with self._connection:
+            self._connection.execute(
+                """
+                UPDATE fresh_window_decisions
+                SET created_job_id = ?
+                WHERE id = ?
+                """,
+                (job_id, decision_id),
+            )
+
+    def get_fresh_window_decision(self, decision_id: int) -> FreshWindowDecisionRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM fresh_window_decisions WHERE id = ?",
+            (decision_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._fresh_window_decision_from_row(row)
+
+    def list_recent_fresh_window_decisions(
+        self,
+        *,
+        days: int = 90,
+        limit: int = 100,
+    ) -> list[FreshWindowDecisionRecord]:
+        cutoff = utc_now() - timedelta(days=max(1, int(days)))
+        rows = self._connection.execute(
+            """
+            SELECT *
+            FROM fresh_window_decisions
+            WHERE created_at >= ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (_format_datetime(cutoff), max(1, int(limit))),
+        ).fetchall()
+        return [self._fresh_window_decision_from_row(row) for row in rows]
+
     def _replace_articles(self, job_id: str, articles: list[AutomationJobArticle]) -> None:
         self._connection.execute(
             "DELETE FROM automation_job_articles WHERE job_id = ?",
@@ -539,6 +668,29 @@ class AutomationJobRepository:
         )
 
     @staticmethod
+    def _fresh_window_decision_from_row(row: sqlite3.Row) -> FreshWindowDecisionRecord:
+        return FreshWindowDecisionRecord(
+            id=int(row["id"]),
+            run_id=str(row["run_id"]),
+            decision=str(row["decision"]),
+            issue_score=float(row["issue_score"] or 0.0),
+            notification_level=str(row["notification_level"] or "watch"),
+            topic_name=str(row["topic_name"] or ""),
+            group_key=str(row["group_key"] or ""),
+            dedupe_key=str(row["dedupe_key"] or ""),
+            representative_article_id=str(row["representative_article_id"] or ""),
+            target_article_ids=_json_loads_list(row["target_article_ids_json"]),
+            related_article_ids=_json_loads_list(row["related_article_ids_json"]),
+            reason_summary=str(row["reason_summary"] or ""),
+            risk_flags=_json_loads_list(row["risk_flags_json"]),
+            model_name=str(row["model_name"] or ""),
+            prompt_version=str(row["prompt_version"] or ""),
+            raw_decision=_json_loads(row["raw_decision_json"]),
+            created_job_id=row["created_job_id"],
+            created_at=_parse_datetime(str(row["created_at"])),
+        )
+
+    @staticmethod
     def _validate_status(status: str) -> None:
         if status not in VALID_JOB_STATUSES:
             allowed = ", ".join(sorted(VALID_JOB_STATUSES))
@@ -591,11 +743,27 @@ def _json_dumps(value: dict[str, Any]) -> str:
     return json.dumps(value or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _json_dumps_list(value: list[str]) -> str:
+    return json.dumps(list(value or []), ensure_ascii=False, separators=(",", ":"))
+
+
 def _json_loads(value: object) -> dict[str, Any]:
     if not value:
         return {}
     parsed = json.loads(str(value))
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_loads_list(value: object) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed]
 
 
 def _format_datetime(value: datetime) -> str:
