@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from kbo_card_news.automation.fresh_window_decision import (
     FreshWindowDecisionConfig,
+    GeminiFreshWindowDecisionEngine,
     FreshWindowDecisionModelResult,
     FreshWindowDecisionRequest,
     FreshWindowTopicDecision,
@@ -17,6 +18,7 @@ from kbo_card_news.automation.fresh_window_decision import (
 )
 from kbo_card_news.automation.job_state import AutomationJobRepository
 from kbo_card_news.pipeline.storage import PersistedSourceItem, SQLiteSourceItemRepository, SourceItemRecord
+from kbo_card_news.runtime.model_fallback import build_model_fallback_policy
 
 
 @dataclass(slots=True)
@@ -51,6 +53,26 @@ class _FakeDecisionEngine:
 
 
 class FreshWindowDecisionTest(unittest.TestCase):
+    def test_default_fresh_decision_fallback_policy_tries_31_then_25_then_openai(self) -> None:
+        self.assertEqual(
+            build_model_fallback_policy("gemini-3.1-flash-lite-preview"),
+            ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "gpt-4o"],
+        )
+
+    def test_fresh_decision_engine_keeps_openai_final_fallback(self) -> None:
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "openai-key"}, clear=False):
+            engine = GeminiFreshWindowDecisionEngine(
+                api_key="gemini-key",
+                model_name="gemini-3.1-flash-lite-preview",
+            )
+
+        self.assertEqual(
+            engine.model_policy,
+            ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "gpt-4o"],
+        )
+        self.assertEqual(engine.max_attempts, 5)
+        self.assertEqual(engine.openai_api_key, "openai-key")
+
     def test_publish_only_creates_job_but_logs_all_decisions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

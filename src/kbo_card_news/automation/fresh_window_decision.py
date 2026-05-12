@@ -184,7 +184,7 @@ class GeminiFreshWindowDecisionEngine:
         prompt_version: str = PROMPT_VERSION,
         transport: HttpTransport | None = None,
         endpoint_base: str = "https://generativelanguage.googleapis.com/v1beta/models",
-        max_attempts: int = 2,
+        max_attempts: int = 5,
         retry_delay_seconds: float = 10.0,
     ) -> None:
         load_default_env()
@@ -193,11 +193,8 @@ class GeminiFreshWindowDecisionEngine:
         self.prompt_version = prompt_version
         self.transport = transport or UrllibHttpTransport()
         self.endpoint_base = endpoint_base.rstrip("/")
-        self.model_policy = [
-            candidate
-            for candidate in build_model_fallback_policy(model_name)
-            if candidate.startswith("gemini")
-        ]
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.model_policy = build_model_fallback_policy(model_name)
         self.max_attempts = max(1, int(max_attempts))
         self.retry_delay_seconds = max(0.0, float(retry_delay_seconds))
 
@@ -213,7 +210,7 @@ class GeminiFreshWindowDecisionEngine:
             validator=lambda parsed: validate_fresh_window_response(parsed, request=request),
             transport=self.transport,
             gemini_api_key=self.api_key,
-            openai_api_key=None,
+            openai_api_key=self.openai_api_key,
             gemini_endpoint_base=self.endpoint_base,
             max_attempts_per_model=self.max_attempts,
             retry_delay_seconds=self.retry_delay_seconds,
