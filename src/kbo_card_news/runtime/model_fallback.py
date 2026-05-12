@@ -13,7 +13,7 @@ GEMINI_MODEL_FALLBACKS = {
     "gemini-2.5-flash-lite": ["gemini-3.1-flash-lite-preview"],
     "gemini-2.5-flash": ["gemini-3-flash-preview"],
 }
-OPENAI_FINAL_FALLBACK_MODEL = "gpt-4o"
+OPENAI_FINAL_FALLBACK_MODEL = "gpt-4o-mini"
 
 
 class RetryableModelError(RuntimeError):
@@ -252,7 +252,7 @@ def call_openai(
                 "type": "json_schema",
                 "name": schema_name,
                 "strict": True,
-                "schema": json_schema,
+                "schema": _openai_strict_schema(json_schema),
             }
         },
     }
@@ -302,4 +302,18 @@ def _convert_schema_types(value: Any, *, upper: bool) -> Any:
         return converted
     if isinstance(value, list):
         return [_convert_schema_types(item, upper=upper) for item in value]
+    return value
+
+
+def _openai_strict_schema(value: Any) -> Any:
+    if isinstance(value, dict):
+        converted = {key: _openai_strict_schema(item) for key, item in value.items()}
+        if converted.get("type") == "object":
+            properties = converted.get("properties")
+            if isinstance(properties, dict):
+                converted["required"] = list(properties.keys())
+            converted["additionalProperties"] = False
+        return converted
+    if isinstance(value, list):
+        return [_openai_strict_schema(item) for item in value]
     return value

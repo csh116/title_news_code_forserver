@@ -487,6 +487,9 @@ def build_fresh_window_decision_prompt(request: FreshWindowDecisionRequest) -> s
         "You may publish, hold, or reject topic groups. Return an empty topic_decisions array when nothing is worth tracking.\n"
         "Publish only when at least one target article supports the topic. Historical context is evidence only.\n"
         "Do not group articles merely because they share a team. Context URLs may be related_article_ids only when they are the same incident.\n"
+        "ID rules are strict: target_article_ids may contain ONLY IDs from target_articles. related_article_ids may contain IDs from historical_context_articles or other supporting target_articles. representative_article_id must be one of the IDs you return in target_article_ids or related_article_ids.\n"
+        "For every publish decision, target_article_ids is required and must include at least one target_articles ID. If no target_articles ID supports a topic, do not publish it.\n"
+        "Never copy an ID from historical_context_articles into target_article_ids. When unsure about an ID, omit it rather than inventing or moving it.\n"
         "Strong publish candidates: injury, surgery, long absence, first-team roster removal, discipline, controversy, apology, incident, trade, release, foreign-player replacement, manager change, playoff-impacting news, or multi-source spread.\n"
         "Default reject: previews, probable starters, standings-only, game result roundups, Futures League, repeated completed topics.\n"
         "Write topic_name and reason_summary in Korean. Use article IDs exactly as given.\n\n"
@@ -531,7 +534,8 @@ def parse_fresh_window_decisions(
     if not isinstance(raw_decisions, list):
         raise ValueError("fresh window response missing topic_decisions array")
     target_ids = {article.article_id for article in request.target_articles}
-    all_ids = target_ids | {article.article_id for article in request.historical_context_articles}
+    context_ids = {article.article_id for article in request.historical_context_articles}
+    all_ids = target_ids | context_ids
     decisions: list[FreshWindowTopicDecision] = []
     for raw in raw_decisions:
         if not isinstance(raw, dict):
@@ -539,19 +543,25 @@ def parse_fresh_window_decisions(
         decision = str(raw.get("decision") or "").strip().lower()
         if decision not in {"publish", "hold", "reject"}:
             raise ValueError(f"invalid fresh window decision: {decision}")
-        target_article_ids = _string_list(raw.get("target_article_ids"))
-        related_article_ids = _string_list(raw.get("related_article_ids"))
         representative_article_id = str(raw.get("representative_article_id") or "").strip()
+        target_article_ids, related_article_ids = _normalize_decision_article_ids(
+            raw,
+            decision=decision,
+            representative_article_id=representative_article_id,
+            target_ids=target_ids,
+            context_ids=context_ids,
+            all_ids=all_ids,
+        )
         unknown_ids = [article_id for article_id in [*target_article_ids, *related_article_ids, representative_article_id] if article_id and article_id not in all_ids]
         if unknown_ids:
             raise ValueError(f"fresh window response referenced unknown article ids: {unknown_ids}")
+        if decision == "publish" and not target_ids.intersection(target_article_ids):
+            decision = "reject"
         if decision == "publish":
             required = ["topic_name", "group_key", "dedupe_key", "representative_article_id"]
             missing = [key for key in required if not str(raw.get(key) or "").strip()]
             if missing:
                 raise ValueError(f"publish decision missing required fields: {missing}")
-            if not target_ids.intersection(target_article_ids):
-                raise ValueError("publish decision must include at least one target article id")
             if representative_article_id not in all_ids:
                 raise ValueError("publish representative_article_id must exist in input articles")
         decisions.append(
@@ -573,6 +583,62 @@ def parse_fresh_window_decisions(
             )
         )
     return decisions
+
+
+def _normalize_decision_article_ids(
+    raw: dict[str, Any],
+    *,
+    decision: str,
+    representative_article_id: str,
+    target_ids: set[str],
+    context_ids: set[str],
+    all_ids: set[str],
+) -> tuple[list[str], list[str]]:
+    raw_target_ids = _string_list(raw.get("target_article_ids"))
+    raw_related_ids = _string_list(raw.get("related_article_ids"))
+    unknown_ids = [
+        article_id
+        for article_id in [*raw_target_ids, *raw_related_ids, representative_article_id]
+        if article_id and article_id not in all_ids
+    ]
+    if unknown_ids:
+        raise ValueError(f"fresh window response referenced unknown article ids: {unknown_ids}")
+
+    target_article_ids = _unique_ids(article_id for article_id in raw_target_ids if article_id in target_ids)
+    related_article_ids = _unique_ids(
+        [
+            *(article_id for article_id in raw_target_ids if article_id in context_ids),
+            *(article_id for article_id in raw_related_ids if article_id in context_ids),
+        ]
+    )
+
+    if decision == "publish" and not target_ids.intersection(target_article_ids):
+        fallback_target_ids = _unique_ids(
+            [
+                *(article_id for article_id in raw_related_ids if article_id in target_ids),
+                *([representative_article_id] if representative_article_id in target_ids else []),
+            ]
+        )
+        target_article_ids = fallback_target_ids
+
+    if representative_article_id in context_ids and representative_article_id not in related_article_ids:
+        related_article_ids.append(representative_article_id)
+    if representative_article_id in target_ids and representative_article_id not in target_article_ids:
+        target_article_ids.append(representative_article_id)
+
+    return target_article_ids, related_article_ids
+
+
+def _unique_ids(values: Any) -> list[str]:
+    seen: set[str] = set()
+    ids: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ids.append(text)
+    return ids
 
 
 def fresh_window_decision_result_to_dict(result: FreshWindowDecisionResult) -> dict[str, Any]:
